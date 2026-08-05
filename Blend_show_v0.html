@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Blend Mode 游戏画面合成演示</title>
+<style>
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; padding: 20px; margin: 0; }
+h2 { color: #34d399; margin: 0 0 8px 0; font-size: 18px; }
+.subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+.container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 800px; }
+.card { background: #151b2e; border: 1px solid #2d3a5c; border-radius: 8px; padding: 12px; }
+.card-title { font-size: 13px; font-weight: bold; margin-bottom: 8px; }
+canvas { width: 100%; border-radius: 4px; background: #000; image-rendering: pixelated; }
+.controls { margin-top: 10px; }
+select { width: 100%; background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; padding: 6px; font-size: 12px; margin-bottom: 8px; }
+input[type=range] { width: 100%; accent-color: #34d399; }
+.label-row { display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-top: 4px; }
+.desc { font-size: 11px; color: #94a3b8; margin-top: 8px; line-height: 1.5; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<h2>🔀 Blend Mode — 游戏画面合成</h2>
+<div class="subtitle">场景：RPG 战斗场景。Dst = 草地+角色+敌人；Src = 强烈特效（魔法盾/爆炸光/阴影/全屏闪光）。</div>
+<div class="container">
+  <div class="card">
+    <div class="card-title">底层 (Dst) — 游戏场景</div>
+    <canvas id="dstCanvas" width="300" height="200"></canvas>
+    <div class="desc">草地 + 玩家角色（蓝）+ 敌人（红）+ 树木 + 天空。</div>
+  </div>
+  <div class="card">
+    <div class="card-title">上层 (Src) — 强烈特效</div>
+    <canvas id="srcCanvas" width="300" height="200"></canvas>
+    <div class="desc">根据 Blend Mode 变化：魔法盾 / 爆炸 / 树影 / 全屏闪光 / 细节纹理。</div>
+  </div>
+  <div class="card" style="grid-column: 1 / -1;">
+    <div class="card-title">合成结果</div>
+    <canvas id="blendResult" width="620" height="200"></canvas>
+    <div class="controls">
+      <select id="blendMode" onchange="updateBlend()">
+        <option value="normal">Normal (SrcAlpha) — 魔法盾覆盖</option>
+        <option value="add">Additive — 爆炸火光，越叠越亮</option>
+        <option value="multiply">Multiply — 树影投射，场景变暗</option>
+        <option value="screen">Screen — 全屏白色闪光（技能释放）</option>
+        <option value="overlay">Overlay — 受伤红边 + 对比增强</option>
+      </select>
+      <label style="font-size:12px;color:#cbd5e1;">特效强度: <span id="blendAlphaVal" style="color:#34d399;font-weight:bold;">0.80</span></label>
+      <input type="range" id="blendAlpha" min="0" max="100" value="80" oninput="updateBlend()">
+      <div class="label-row"><span>0.0 (无)</span><span>1.0 (最强)</span></div>
+    </div>
+    <div class="desc" id="blendDesc">Normal：半透明魔法盾覆盖在角色身上，边缘柔和。适合 UI、护盾、常规透明。</div>
+  </div>
+</div>
+<script>
+const W = 300, H = 200;
+function lerp(a,b,t){return a+(b-a)*t;}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+
+function genScene(x, y) {
+  const nx = x / W, ny = y / H;
+  let r = 100, g = 160, b = 220;
+  // Sky
+  if (ny < 0.45) {
+    r = Math.floor(lerp(120, 80, ny/0.45));
+    g = Math.floor(lerp(180, 140, ny/0.45));
+    b = Math.floor(lerp(240, 200, ny/0.45));
+  }
+  // Ground
+  if (ny > 0.5) {
+    const grass = Math.sin(x * 0.25) * 8;
+    r = 50 + grass; g = 120 + grass; b = 40;
+  }
+  // Tree trunk
+  if (nx > 0.15 && nx < 0.22 && ny > 0.25 && ny < 0.55) {
+    r = 80; g = 60; b = 40;
+  }
+  // Tree leaves
+  if (Math.sqrt((nx-0.18)*(nx-0.18)*8 + (ny-0.22)*(ny-0.22)*4) < 0.15) {
+    r = 40; g = 100; b = 30;
+  }
+  // Player character (blue knight)
+  if (nx > 0.4 && nx < 0.55 && ny > 0.45 && ny < 0.85) {
+    const px = (nx-0.4)/0.15, py = (ny-0.45)/0.4;
+    // Body
+    if (px > 0.3 && px < 0.7 && py > 0.2 && py < 0.8) {
+      r = 60; g = 100; b = 200;
+    }
+    // Head
+    if (Math.sqrt((px-0.5)*(px-0.5)*4 + (py-0.15)*(py-0.15)*4) < 0.2) {
+      r = 220; g = 180; b = 140;
+    }
+    // Sword
+    if (px > 0.7 && px < 0.9 && py > 0.3 && py < 0.7) {
+      r = 200; g = 200; b = 210;
+    }
+  }
+  // Enemy (red orc)
+  if (nx > 0.7 && nx < 0.9 && ny > 0.5 && ny < 0.9) {
+    const px = (nx-0.7)/0.2, py = (ny-0.5)/0.4;
+    if (px > 0.2 && px < 0.8 && py > 0.15 && py < 0.85) {
+      r = 180; g = 60; b = 50;
+    }
+    if (Math.sqrt((px-0.5)*(px-0.5)*4 + (py-0.1)*(py-0.1)*4) < 0.25) {
+      r = 60; g = 140; b = 60; // green orc face
+    }
+  }
+  return [clamp(r,0,255), clamp(g,0,255), clamp(b,0,255)];
+}
+
+function genEffect(x, y, mode, time) {
+  const nx = x / W, ny = y / H;
+  let r = 0, g = 0, b = 0, a = 0;
+
+  if (mode === 'normal') {
+    // Magic shield: blue bubble around player
+    const dx = nx - 0.47, dy = ny - 0.65;
+    const dist = Math.sqrt(dx*dx*2 + dy*dy);
+    if (dist > 0.25 && dist < 0.35) {
+      const edge = 1 - Math.abs(dist - 0.3) / 0.05;
+      r = 80; g = 150; b = 255;
+      a = edge * 0.6;
+    }
+  } else if (mode === 'add') {
+    // Explosion fire at enemy position
+    const dx = nx - 0.8, dy = ny - 0.7;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const fire = Math.max(0, 1 - dist * 4);
+    const noise = Math.sin(x*0.3 + time*5) * Math.cos(y*0.4 - time*3) * 0.3;
+    const intensity = Math.max(0, fire + noise * fire);
+    r = intensity;
+    g = intensity * intensity * 0.7;
+    b = intensity * 0.2;
+    a = intensity;
+  } else if (mode === 'multiply') {
+    // Tree shadow
+    const shadow = Math.max(0, 1 - Math.sqrt((nx-0.18)*(nx-0.18)*3 + (ny-0.6)*(ny-0.6)*2) * 2);
+    r = 0.3; g = 0.3; b = 0.4;
+    a = shadow * 0.7;
+  } else if (mode === 'screen') {
+    // Full screen white flash
+    const flash = Math.sin(time * 3) * 0.5 + 0.5;
+    r = flash; g = flash; b = flash;
+    a = flash * 0.8;
+  } else if (mode === 'overlay') {
+    // Damage red vignette
+    const vignette = Math.sqrt((nx-0.5)*(nx-0.5) + (ny-0.5)*(ny-0.5)) * 1.5;
+    const edge = Math.max(0, vignette - 0.3);
+    r = edge * 0.8;
+    g = 0;
+    b = 0;
+    a = edge * 0.9;
+  }
+
+  return [Math.floor(r*255), Math.floor(g*255), Math.floor(b*255), Math.floor(a*255)];
+}
+
+const dstCtx = document.getElementById('dstCanvas').getContext('2d');
+const dstImg = new ImageData(W, H);
+for (let y = 0; y < H; y++) {
+  for (let x = 0; x < W; x++) {
+    const [r,g,b] = genScene(x, y);
+    const i = (y*W+x)*4;
+    dstImg.data[i]=r; dstImg.data[i+1]=g; dstImg.data[i+2]=b; dstImg.data[i+3]=255;
+  }
+}
+dstCtx.putImageData(dstImg, 0, 0);
+
+const descs = {
+  normal: 'Normal：半透明魔法盾覆盖角色。Alpha 控制边缘柔和度。适合护盾、UI、气泡。',
+  add: 'Additive：火焰爆炸与场景颜色相加，越叠越亮，暗部不遮挡。适合爆炸、魔法、Bloom。',
+  multiply: 'Multiply：树影让场景变暗，模拟光照遮挡。适合阴影、AO、暗角、污渍。',
+  screen: 'Screen：全屏白色闪光，反相相乘后变亮。适合技能释放、闪光灯、传送特效。',
+  overlay: 'Overlay：红色暗角 + 对比增强，模拟角色受伤或紧张状态。适合后处理、LUT。'
+};
+
+function updateBlend() {
+  const mode = document.getElementById('blendMode').value;
+  const alpha = parseInt(document.getElementById('blendAlpha').value) / 100;
+  document.getElementById('blendAlphaVal').textContent = alpha.toFixed(2);
+  document.getElementById('blendDesc').textContent = descs[mode];
+
+  const time = Date.now() * 0.002;
+  const srcCtx = document.getElementById('srcCanvas').getContext('2d');
+  const srcImg = new ImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const [r,g,b,a] = genEffect(x, y, mode, time);
+      const i = (y*W+x)*4;
+      srcImg.data[i]=r; srcImg.data[i+1]=g; srcImg.data[i+2]=b; srcImg.data[i+3]=a;
+    }
+  }
+  srcCtx.putImageData(srcImg, 0, 0);
+
+  const resCtx = document.getElementById('blendResult').getContext('2d');
+  const resImg = new ImageData(620, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < 620; x++) {
+      const sx = x % W;
+      const di = (y*W+sx)*4;
+      const si = (y*W+sx)*4;
+      const dr = dstImg.data[di], dg = dstImg.data[di+1], db = dstImg.data[di+2];
+      const sr = srcImg.data[si], sg = srcImg.data[si+1], sb = srcImg.data[si+2], sa = srcImg.data[si+3] / 255 * alpha;
+      let r=dr, g=dg, b=db;
+      switch(mode) {
+        case 'normal':
+          r = sr*sa + dr*(1-sa); g = sg*sa + dg*(1-sa); b = sb*sa + db*(1-sa); break;
+        case 'add':
+          r = clamp(dr + sr*sa, 0, 255); g = clamp(dg + sg*sa, 0, 255); b = clamp(db + sb*sa, 0, 255); break;
+        case 'multiply':
+          r = (dr/255) * (sr*sa + dr*(1-sa)) / 255 * 255;
+          g = (dg/255) * (sg*sa + dg*(1-sa)) / 255 * 255;
+          b = (db/255) * (sb*sa + db*(1-sa)) / 255 * 255; break;
+        case 'screen':
+          r = 255 - (1-sr*sa/255)*(1-dr/255)*255;
+          g = 255 - (1-sg*sa/255)*(1-dg/255)*255;
+          b = 255 - (1-sb*sa/255)*(1-db/255)*255; break;
+        case 'overlay':
+          const blend = (d, s) => d < 128 ? 2*d*s/255 : 255 - 2*(255-d)*(255-s)/255;
+          const mixR = sr*sa + dr*(1-sa);
+          r = blend(dr, mixR);
+          g = blend(dg, sg*sa + dg*(1-sa));
+          b = blend(db, sb*sa + db*(1-sa)); break;
+      }
+      const i = (y*620+x)*4;
+      resImg.data[i]=Math.floor(r); resImg.data[i+1]=Math.floor(g); resImg.data[i+2]=Math.floor(b); resImg.data[i+3]=255;
+    }
+  }
+  resCtx.putImageData(resImg, 0, 0);
+  requestAnimationFrame(updateBlend);
+}
+updateBlend();
+</script>
+</body>
+</html>

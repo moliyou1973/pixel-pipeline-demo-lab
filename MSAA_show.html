@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MSAA 锯齿边缘放大对比</title>
+<style>
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; padding: 20px; margin: 0; }
+h2 { color: #60a5fa; margin: 0 0 8px 0; font-size: 18px; }
+.subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+.container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 900px; }
+.card { background: #151b2e; border: 1px solid #2d3a5c; border-radius: 8px; padding: 12px; }
+.card-title { font-size: 13px; font-weight: bold; margin-bottom: 8px; }
+canvas { width: 100%; border-radius: 4px; background: #000; image-rendering: pixelated; }
+.controls { display: flex; gap: 8px; margin-top: 10px; }
+button { flex: 1; background: #1e293b; color: #94a3b8; border: 1px solid #475569; border-radius: 4px; padding: 8px; font-size: 12px; cursor: pointer; }
+button.active { background: #2d3a5c; color: #e2e8f0; border-color: #60a5fa; }
+.desc { font-size: 11px; color: #94a3b8; margin-top: 8px; line-height: 1.5; }
+.zoom-label { font-size: 10px; color: #64748b; text-align: center; margin-top: 4px; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<h2>🎯 MSAA 锯齿边缘放大对比</h2>
+<div class="subtitle">极简场景：一条占据画面 80% 的大斜边。1× 时边缘呈剧烈锯齿，8× 时几乎完全平滑。</div>
+<div class="container">
+  <div class="card">
+    <div class="card-title">1× 无抗锯齿 — 锯齿剧烈</div>
+    <canvas id="canvas1x" width="400" height="250"></canvas>
+    <div class="zoom-label">注意看斜边：像楼梯一样一级一级跳变</div>
+  </div>
+  <div class="card">
+    <div class="card-title">8× MSAA — 边缘平滑</div>
+    <canvas id="canvas8x" width="400" height="250"></canvas>
+    <div class="zoom-label">同样的斜边：子像素混合后呈连续灰度过渡</div>
+  </div>
+  <div class="card" style="grid-column: 1 / -1;">
+    <div class="card-title">🔍 8× 放大局部 — 红框区域 (左:1× vs 右:8×)</div>
+    <canvas id="zoomCanvas" width="800" height="200"></canvas>
+    <div class="controls">
+      <button onclick="setMSAA(1)" class="msaa-btn active" data-s="1">1× 锯齿</button>
+      <button onclick="setMSAA(2)" class="msaa-btn" data-s="2">2×</button>
+      <button onclick="setMSAA(4)" class="msaa-btn" data-s="4">4×</button>
+      <button onclick="setMSAA(8)" class="msaa-btn" data-s="8">8× 平滑</button>
+    </div>
+    <div class="desc">放大区域：红框标记的斜边局部。1× 时像素要么全白要么全黑；8× 时每个像素按覆盖率产生中间灰度，边缘连续。</div>
+  </div>
+</div>
+<script>
+let msaaSamples = 1;
+const W = 400, H = 250, ZW = 800, ZH = 200;
+function setMSAA(n) {
+  msaaSamples = n;
+  document.querySelectorAll('.msaa-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.s) === n));
+}
+
+// Big diagonal edge covering most of the screen
+function edgeCoverage(px, py, samples) {
+  let cov = 0;
+  const sqrtS = Math.sqrt(samples);
+  for (let sy = 0; sy < sqrtS; sy++) {
+    for (let sx = 0; sx < sqrtS; sx++) {
+      const ox = samples === 1 ? 0.5 : (sx + 0.5) / sqrtS;
+      const oy = samples === 1 ? 0.5 : (sy + 0.5) / sqrtS;
+      const x = px + ox, y = py + oy;
+      // A long diagonal line from top-left to bottom-right, thick=3px
+      // Line equation: y = 0.65*x + 20
+      const lineY = 0.65 * x + 20;
+      if (Math.abs(y - lineY) < 1.5) cov++;
+    }
+  }
+  return cov / samples;
+}
+
+function draw() {
+  const ctx1 = document.getElementById('canvas1x').getContext('2d');
+  const img1 = ctx1.createImageData(W, H);
+  const ctx8 = document.getElementById('canvas8x').getContext('2d');
+  const img8 = ctx8.createImageData(W, H);
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const cov1 = edgeCoverage(x, y, 1);
+      const cov8 = edgeCoverage(x, y, 8);
+      const i = (y * W + x) * 4;
+      // Cyan line on dark blue bg
+      img1.data[i] = Math.floor(5 + 40 * cov1);
+      img1.data[i+1] = Math.floor(10 + 200 * cov1);
+      img1.data[i+2] = Math.floor(15 + 240 * cov1);
+      img1.data[i+3] = 255;
+      img8.data[i] = Math.floor(5 + 40 * cov8);
+      img8.data[i+1] = Math.floor(10 + 200 * cov8);
+      img8.data[i+2] = Math.floor(15 + 240 * cov8);
+      img8.data[i+3] = 255;
+    }
+  }
+  ctx1.putImageData(img1, 0, 0);
+  ctx8.putImageData(img8, 0, 0);
+
+  // Zoom view: left half = 1x zoomed, right half = current MSAA zoomed
+  // Zoom into region around x=150~250, y=120~170
+  const zoomX = 150, zoomY = 120, zoomW = 80, zoomH = 40;
+  const ctxZ = document.getElementById('zoomCanvas').getContext('2d');
+  const imgZ = ctxZ.createImageData(ZW, ZH);
+
+  for (let y = 0; y < ZH; y++) {
+    for (let x = 0; x < ZW; x++) {
+      const isLeft = x < ZW / 2;
+      const srcX = zoomX + (x % (ZW/2)) / (ZW/2) * zoomW;
+      const srcY = zoomY + y / ZH * zoomH;
+      const cov = isLeft ? edgeCoverage(srcX, srcY, 1) : edgeCoverage(srcX, srcY, msaaSamples);
+      const r = Math.floor(5 + 40 * cov);
+      const g = Math.floor(10 + 200 * cov);
+      const b = Math.floor(15 + 240 * cov);
+      const i = (y * ZW + x) * 4;
+      imgZ.data[i] = r; imgZ.data[i+1] = g; imgZ.data[i+2] = b; imgZ.data[i+3] = 255;
+    }
+  }
+  ctxZ.putImageData(imgZ, 0, 0);
+
+  // Draw red rectangle on 1x and 8x to show zoom region
+  drawRect(ctx1, zoomX, zoomY, zoomW, zoomH, W, H);
+  drawRect(ctx8, zoomX, zoomY, zoomW, zoomH, W, H);
+
+  requestAnimationFrame(draw);
+}
+
+function drawRect(ctx, rx, ry, rw, rh, cw, ch) {
+  // We can't draw on top of putImageData easily, so we'll overlay by getting image data
+  const img = ctx.getImageData(0, 0, cw, ch);
+  // Draw red box outline
+  for (let x = Math.floor(rx); x <= Math.floor(rx+rw); x++) {
+    for (let y = Math.floor(ry); y <= Math.floor(ry+rh); y++) {
+      if (x === Math.floor(rx) || x === Math.floor(rx+rw) || y === Math.floor(ry) || y === Math.floor(ry+rh)) {
+        if (x >= 0 && x < cw && y >= 0 && y < ch) {
+          const i = (y * cw + x) * 4;
+          img.data[i] = 255; img.data[i+1] = 50; img.data[i+2] = 50; img.data[i+3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+draw();
+</script>
+</body>
+</html>
