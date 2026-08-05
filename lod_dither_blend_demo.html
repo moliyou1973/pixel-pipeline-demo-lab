@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOD 过渡 + TAA 时域抗锯齿对比</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  padding: 20px;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+h2 { margin: 0 0 8px 0; font-size: 20px; color: #38bdf8; }
+p { margin: 0 0 20px 0; color: #94a3b8; font-size: 13px; }
+.slider-container { margin-bottom: 16px; }
+label { display: block; margin-bottom: 6px; font-size: 13px; color: #cbd5e1; }
+input[type=range] { width: 100%; accent-color: #38bdf8; }
+.slider-labels {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: #64748b; margin-top: 4px;
+}
+#sliderValue { color: #38bdf8; font-weight: bold; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.card {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid #334155;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+.card-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+canvas {
+  width: 100%;
+  border-radius: 4px;
+  background: #020617;
+  image-rendering: pixelated;
+}
+.tech-section {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 16px;
+  border: 1px solid #334155;
+  margin-top: 20px;
+}
+.tech-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: #e2e8f0;
+  margin-bottom: 12px;
+}
+.tech-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.tech-block-title {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+.tech-block-text {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.7;
+}
+.code-block {
+  margin-top: 12px;
+  padding: 10px;
+  background: #0f172a;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #cbd5e1;
+  line-height: 1.6;
+}
+</style>
+</head>
+<body>
+<h2>🎮 LOD 过渡 + TAA 时域抗锯齿对比</h2>
+<p>拖动滑块模拟摄像机距离变化。观察 Dither 在有无 TAA 时的本质差异。</p>
+
+<div class="slider-container">
+  <label>LOD 过渡因子 (0 = 低LOD, 1 = 高LOD)</label>
+  <input type="range" id="lodSlider" min="0" max="100" value="50">
+  <div class="slider-labels">
+    <span>纯低 LOD</span>
+    <span id="sliderValue">0.50</span>
+    <span>纯高 LOD</span>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-title" style="color: #f87171;">❌ Hard Cut</div>
+    <canvas id="canvasHard" width="200" height="200"></canvas>
+    <div class="card-desc">阈值 &lt; 0.5 纯低模，≥ 0.5 纯高模。可见明显跳变。</div>
+  </div>
+  <div class="card" style="border-color: #f59e0b;">
+    <div class="card-title" style="color: #f59e0b;">🔸 Dither (No TAA)</div>
+    <canvas id="canvasDitherRaw" width="200" height="200"></canvas>
+    <div class="card-desc">纯 Bayer 阈值剔除。静止可看到清晰棋盘格噪点，闪烁感强。</div>
+  </div>
+  <div class="card" style="border-color: #38bdf8;">
+    <div class="card-title" style="color: #38bdf8;">🔹 Dither + TAA</div>
+    <canvas id="canvasDitherTAA" width="200" height="200"></canvas>
+    <div class="card-desc">时域积分 4 帧历史。噪点被时域低通滤波平滑，接近 Blend 效果。</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card" style="border-color: #34d399;">
+    <div class="card-title" style="color: #34d399;">✅ Blend (LERP)</div>
+    <canvas id="canvasBlend" width="200" height="200"></canvas>
+    <div class="card-desc">颜色线性插值。视觉最平滑，但像素着色翻倍。</div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="color: #e2e8f0;">🧮 Bayer 4x4 矩阵</div>
+    <canvas id="bayerMatrix" width="200" height="200"></canvas>
+    <div class="card-desc">每个像素查表得阈值 T∈[0,15]，归一化后与过渡因子比较。</div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="color: #e2e8f0;">⏱️ TAA 历史帧混合示意</div>
+    <canvas id="taaAccum" width="200" height="200"></canvas>
+    <div class="card-desc">展示当前帧权重(10%)与3帧历史(各30%)的加权混合过程。</div>
+  </div>
+</div>
+
+<div class="tech-section">
+  <div class="tech-title">📐 TAA 对 Dither 的作用原理</div>
+  <div class="tech-grid">
+    <div>
+      <div class="tech-block-title" style="color: #f59e0b;">无 TAA 的问题</div>
+      <div class="tech-block-text">
+        Dither 每帧独立决策，像素要么全取高 LOD，要么全取低 LOD。<br>
+        当 factor=0.5 时，约 50% 像素来自高 LOD，50% 来自低 LOD。<br>
+        由于 Bayer 矩阵空间分布固定，<strong style="color: #f87171;">静止观察能看到清晰棋盘格图案</strong>。<br>
+        相机或物体微动时，这种空间固定噪点转化为<strong>时域闪烁（Temporal Flicker）</strong>，极易引起视觉疲劳。
+      </div>
+    </div>
+    <div>
+      <div class="tech-block-title" style="color: #38bdf8;">有 TAA 的解决</div>
+      <div class="tech-block-text">
+        TAA 每帧对投影矩阵做子像素抖动（Jitter），使同一屏幕像素在多帧中采样到不同的子像素位置。<br>
+        这等价于让 Bayer 阈值在时域上产生微小偏移，<strong style="color: #38bdf8;">每个像素位置在不同时刻看到不同的 LOD 决策</strong>。<br>
+        历史帧混合（通常当前帧 10% + 历史 90%）在时域上做低通滤波，<strong>离散噪点被积分为连续灰度</strong>，人眼感知接近 Blend。
+      </div>
+    </div>
+  </div>
+  <div class="code-block">
+    <span style="color: #64748b;">// TAA 历史混合简化公式（每像素 RGB）</span><br>
+    <span style="color: #f59e0b;">color_TAA</span> = <span style="color: #38bdf8;">color_curr</span> * 0.10 + <span style="color: #34d399;">color_hist</span> * 0.90;<br>
+    <span style="color: #64748b;">// 由于 dither 的离散性，多帧平均后恰好逼近 lerp(low, high, factor)</span>
+  </div>
+</div>
+
+<script>
+const slider = document.getElementById('lodSlider');
+const sliderValue = document.getElementById('sliderValue');
+
+const W = 200, H = 200;
+const bayer4 = [
+  0,  8,  2,  10,
+  12, 4,  14, 6,
+  3,  11, 1,  9,
+  15, 7,  13, 5
+];
+
+const historyBuffers = [];
+for (let i = 0; i < 4; i++) {
+  historyBuffers.push(new Uint8ClampedArray(W * H * 4));
+}
+let frameCount = 0;
+
+function getLowLODColor(x, y) {
+  const bx = Math.floor(x / 8) % 2;
+  const by = Math.floor(y / 8) % 2;
+  const c = (bx ^ by) ? 80 : 40;
+  return [c, c + 10, c + 30];
+}
+
+function getHighLODColor(x, y) {
+  const bx = Math.floor(x / 3) % 2;
+  const by = Math.floor(y / 3) % 2;
+  const detail = Math.sin(x * 0.3) * Math.cos(y * 0.3) * 20;
+  const c = (bx ^ by) ? 160 : 120;
+  return [c + detail, c + detail + 20, c + detail + 60];
+}
+
+function drawScene() {
+  const factor = parseInt(slider.value) / 100;
+  sliderValue.textContent = factor.toFixed(2);
+  frameCount++;
+
+  const ctxH = document.getElementById('canvasHard').getContext('2d');
+  const imgH = ctxH.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const [r, g, b] = factor < 0.5 ? getLowLODColor(x, y) : getHighLODColor(x, y);
+      const i = (y * W + x) * 4;
+      imgH.data[i] = r; imgH.data[i+1] = g; imgH.data[i+2] = b; imgH.data[i+3] = 255;
+    }
+  }
+  ctxH.putImageData(imgH, 0, 0);
+
+  const ctxDR = document.getElementById('canvasDitherRaw').getContext('2d');
+  const imgDR = ctxDR.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const bayerVal = bayer4[(y % 4) * 4 + (x % 4)];
+      const threshold = (bayerVal + 0.5) / 16.0;
+      const useHigh = factor > threshold;
+      const [r, g, b] = useHigh ? getHighLODColor(x, y) : getLowLODColor(x, y);
+      const i = (y * W + x) * 4;
+      imgDR.data[i] = r; imgDR.data[i+1] = g; imgDR.data[i+2] = b; imgDR.data[i+3] = 255;
+    }
+  }
+  ctxDR.putImageData(imgDR, 0, 0);
+
+  const ctxDT = document.getElementById('canvasDitherTAA').getContext('2d');
+  const imgDT = ctxDT.createImageData(W, H);
+  const currFrame = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const jx = (x + frameCount) % 4;
+      const jy = (y + frameCount) % 4;
+      const bayerVal = bayer4[jy * 4 + jx];
+      const threshold = (bayerVal + 0.5) / 16.0;
+      const useHigh = factor > threshold;
+      const [r, g, b] = useHigh ? getHighLODColor(x, y) : getLowLODColor(x, y);
+      const i = (y * W + x) * 4;
+      currFrame[i] = r; currFrame[i+1] = g; currFrame[i+2] = b; currFrame[i+3] = 255;
+    }
+  }
+  for (let i = 0; i < W * H * 4; i += 4) {
+    let r = currFrame[i] * 0.10;
+    let g = currFrame[i+1] * 0.10;
+    let b = currFrame[i+2] * 0.10;
+    for (let h = 0; h < 3; h++) {
+      r += historyBuffers[h][i] * 0.30;
+      g += historyBuffers[h][i+1] * 0.30;
+      b += historyBuffers[h][i+2] * 0.30;
+    }
+    imgDT.data[i] = r; imgDT.data[i+1] = g; imgDT.data[i+2] = b; imgDT.data[i+3] = 255;
+  }
+  ctxDT.putImageData(imgDT, 0, 0);
+  for (let h = 2; h >= 0; h--) {
+    historyBuffers[h+1].set(historyBuffers[h]);
+  }
+  historyBuffers[0].set(currFrame);
+
+  const ctxB = document.getElementById('canvasBlend').getContext('2d');
+  const imgB = ctxB.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const [rl, gl, bl] = getLowLODColor(x, y);
+      const [rh, gh, bh] = getHighLODColor(x, y);
+      const i = (y * W + x) * 4;
+      imgB.data[i]   = rl + (rh - rl) * factor;
+      imgB.data[i+1] = gl + (gh - gl) * factor;
+      imgB.data[i+2] = bl + (bh - bl) * factor;
+      imgB.data[i+3] = 255;
+    }
+  }
+  ctxB.putImageData(imgB, 0, 0);
+
+  const ctxM = document.getElementById('bayerMatrix').getContext('2d');
+  const cellSize = 50;
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const val = bayer4[y * 4 + x];
+      const gray = Math.floor((val / 15) * 255);
+      ctxM.fillStyle = `rgb(${gray},${gray},${gray})`;
+      ctxM.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+      ctxM.fillStyle = gray > 128 ? '#000' : '#fff';
+      ctxM.font = 'bold 16px monospace';
+      ctxM.textAlign = 'center';
+      ctxM.fillText(val.toString(), x * cellSize + cellSize/2, y * cellSize + cellSize/2 + 6);
+    }
+  }
+  const thresholdY = (1 - factor) * 200;
+  ctxM.strokeStyle = '#f87171';
+  ctxM.lineWidth = 2;
+  ctxM.beginPath();
+  ctxM.moveTo(0, thresholdY);
+  ctxM.lineTo(200, thresholdY);
+  ctxM.stroke();
+  ctxM.fillStyle = '#f87171';
+  ctxM.font = '12px sans-serif';
+  ctxM.fillText(`threshold = ${factor.toFixed(2)}`, 10, thresholdY - 5);
+
+  const ctxAcc = document.getElementById('taaAccum').getContext('2d');
+  const barW = 180, barH = 24, startX = 10;
+  ctxAcc.clearRect(0, 0, 200, 200);
+  ctxAcc.fillStyle = '#0f172a';
+  ctxAcc.fillRect(0, 0, 200, 200);
+  const weights = [
+    { label: 'Current Frame (Jittered)', w: 0.10, color: '#38bdf8' },
+    { label: 'History Frame t-1', w: 0.30, color: '#34d399' },
+    { label: 'History Frame t-2', w: 0.30, color: '#22c55e' },
+    { label: 'History Frame t-3', w: 0.30, color: '#16a34a' }
+  ];
+  weights.forEach((item, idx) => {
+    const y = 20 + idx * 40;
+    const w = item.w * barW;
+    ctxAcc.fillStyle = '#334155';
+    ctxAcc.fillRect(startX, y, barW, barH);
+    ctxAcc.fillStyle = item.color;
+    ctxAcc.fillRect(startX, y, w, barH);
+    ctxAcc.fillStyle = '#e2e8f0';
+    ctxAcc.font = '11px sans-serif';
+    ctxAcc.textAlign = 'left';
+    ctxAcc.fillText(`${item.label}: ${(item.w * 100).toFixed(0)}%`, startX, y - 4);
+  });
+  ctxAcc.fillStyle = '#94a3b8';
+  ctxAcc.font = '10px sans-serif';
+  ctxAcc.fillText('时域混合后噪点 → 连续灰度', startX, 185);
+}
+
+slider.addEventListener('input', drawScene);
+let autoFrame = 0;
+function animate() {
+  if (autoFrame < 60) {
+    drawScene();
+    autoFrame++;
+    requestAnimationFrame(animate);
+  }
+}
+drawScene();
+animate();
+</script>
+</body>
+</html>
