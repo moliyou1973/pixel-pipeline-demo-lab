@@ -13,3 +13,7 @@ pixel-pipeline-show-lab,show sub function change for pixel.
 | `blend_demo.html` | **Blend Modes** — An RPG battle scene (grass, knight, orc). Overlay a magic shield / explosion fire / tree shadow / screen flash / damage vignette. Switch between Normal, Add, Multiply, Screen, and Overlay blend modes. |
 | `logic_ops_demo.html` | **Logic Ops (Bitwise)** — A character silhouette (stencil) and a moving light cone (mask). Toggle AND / OR / XOR / NOT to see how stencil-buffer operations control per-pixel visibility. |
 | `memory_layout_demo.html` | **Memory Layout** — A 16×16 grid showing Linear vs Twiddle (Z-Order / Morton code) address mapping. Heat-map colors show access order; animation traces the traversal path to visualize cache locality. |
+| `pixel_function_demo.html` | An interactive HTML/Canvas visualization tool that demonstrates common GPU pixel-processing pipeline features — including dithering, blending, logic ops, gamma correction, swizzle, format conversion, MSAA, and memory layout. All modules are self-contained with real-time controls, built with vanilla HTML + CSS + JavaScript, zero dependencies. Open and play. |
+| `lod_dither_blend_demo.html` | This demo compares LOD transition strategies: hard cut, Bayer dither (with and without TAA), and linear blend. It illustrates how TAA's temporal filtering effectively integrates dithering noise into a continuous gradient, approximating blend quality with single‑LOD shading cost. |
+
+
