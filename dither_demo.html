@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Dither 去色带演示</title>
+<style>
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; padding: 20px; margin: 0; }
+h2 { color: #f59e0b; margin: 0 0 8px 0; font-size: 18px; }
+.subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+.container { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 960px; }
+.card { background: #151b2e; border: 1px solid #2d3a5c; border-radius: 8px; padding: 12px; }
+.card-title { font-size: 12px; font-weight: bold; margin-bottom: 8px; }
+canvas { width: 100%; border-radius: 4px; background: #000; image-rendering: pixelated; }
+.controls { margin-top: 10px; }
+input[type=range] { width: 100%; accent-color: #f59e0b; }
+.label-row { display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-top: 4px; }
+.desc { font-size: 11px; color: #94a3b8; margin-top: 8px; line-height: 1.5; }
+.band-label { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-left: 4px; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<h2>🔹 Dither — 星空暗部去色带</h2>
+<div class="subtitle">场景：夜空渐变（深黑 → 深蓝 → 紫红）。低 bit-depth 下，平滑渐变被强制归类，形成明显条纹。Dither 用噪声替代条纹。</div>
+<div class="container">
+  <div class="card">
+    <div class="card-title">无 Dither <span class="band-label" style="background:#7c2d12;color:#fca5a5;">色带明显</span></div>
+    <canvas id="ditherNone" width="300" height="180"></canvas>
+    <div class="desc">直接量化：暗部的连续渐变变成一道道"等高线"。在天空、体积雾中极其刺眼。</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Bayer Dither <span class="band-label" style="background:#065f46;color:#6ee7b7;">空间噪点</span></div>
+    <canvas id="ditherBayer" width="300" height="180"></canvas>
+    <div class="desc">Ordered Dither：用固定矩阵添加确定性噪声。色带消失，但静止时可见棋盘格图案。</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Blue Noise Dither <span class="band-label" style="background:#1e3a5f;color:#93c5fd;">高频噪点</span></div>
+    <canvas id="ditherBlue" width="300" height="180"></canvas>
+    <div class="desc">Blue Noise：高频随机噪声，人眼更难察觉。配合 TAA 时域积分后几乎不可见。</div>
+  </div>
+</div>
+<div class="card" style="max-width:960px;margin-top:12px;">
+  <div class="controls">
+    <label style="font-size:12px;color:#cbd5e1;">目标 Bit-depth: <span id="ditherBitVal" style="color:#f59e0b;font-weight:bold;">4-bit</span></label>
+    <input type="range" id="ditherBitSlider" min="2" max="6" value="4">
+    <div class="label-row"><span>2-bit (极端)</span><span>4-bit (典型)</span><span>6-bit (轻微)</span></div>
+  </div>
+  <div class="desc">拖动滑块：bit 越低，无 dither 时色带越严重；dither 效果越明显。</div>
+</div>
+<script>
+const W = 300, H = 180;
+const bayer4 = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+const blueNoise4 = [8,2,15,5,11,13,0,7,4,9,12,3,14,6,1,10];
+function lerp(a,b,t){return a+(b-a)*t;}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+
+function genSky(x, y) {
+  const ny = y / H;
+  let r, g, b;
+  if (ny < 0.4) {
+    r = 5; g = 5; b = Math.floor(lerp(30, 60, ny/0.4));
+  } else if (ny < 0.7) {
+    r = Math.floor(lerp(5, 80, (ny-0.4)/0.3));
+    g = Math.floor(lerp(5, 30, (ny-0.4)/0.3));
+    b = Math.floor(lerp(60, 100, (ny-0.4)/0.3));
+  } else {
+    r = Math.floor(lerp(80, 150, (ny-0.7)/0.3));
+    g = Math.floor(lerp(30, 40, (ny-0.7)/0.3));
+    b = Math.floor(lerp(100, 120, (ny-0.7)/0.3));
+  }
+  const starHash = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  const starVal = starHash - Math.floor(starHash);
+  if (starVal > 0.995) {
+    const brightness = Math.floor((starVal - 0.995) / 0.005 * 200);
+    r += brightness; g += brightness; b += brightness;
+  }
+  return [clamp(r,0,255), clamp(g,0,255), clamp(b,0,255)];
+}
+
+function drawDither() {
+  const bits = parseInt(document.getElementById('ditherBitSlider').value);
+  document.getElementById('ditherBitVal').textContent = bits + '-bit';
+  const levels = (1 << bits) - 1;
+
+  const imgNone = new ImageData(W, H);
+  const imgBayer = new ImageData(W, H);
+  const imgBlue = new ImageData(W, H);
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const [r,g,b] = genSky(x, y);
+      for (let ch = 0; ch < 3; ch++) {
+        const v = [r,g,b][ch] / 255;
+        const q = Math.floor(v * levels) / levels;
+        const bThresh = (bayer4[(y%4)*4 + (x%4)] + 0.5) / 16.0;
+        const bStep = 1.0 / levels;
+        const bVal = clamp(Math.floor((v + (bThresh - 0.5) * bStep) * levels) / levels, 0, 1);
+        const nThresh = (blueNoise4[(y%4)*4 + (x%4)] + 0.5) / 16.0;
+        const nVal = clamp(Math.floor((v + (nThresh - 0.5) * bStep) * levels) / levels, 0, 1);
+        const i = (y*W+x)*4 + ch;
+        imgNone.data[i] = Math.floor(q * 255);
+        imgBayer.data[i] = Math.floor(bVal * 255);
+        imgBlue.data[i] = Math.floor(nVal * 255);
+      }
+      const i = (y*W+x)*4 + 3;
+      imgNone.data[i] = 255; imgBayer.data[i] = 255; imgBlue.data[i] = 255;
+    }
+  }
+  document.getElementById('ditherNone').getContext('2d').putImageData(imgNone, 0, 0);
+  document.getElementById('ditherBayer').getContext('2d').putImageData(imgBayer, 0, 0);
+  document.getElementById('ditherBlue').getContext('2d').putImageData(imgBlue, 0, 0);
+}
+document.getElementById('ditherBitSlider').addEventListener('input', drawDither);
+drawDither();
+</script>
+</body>
+</html>

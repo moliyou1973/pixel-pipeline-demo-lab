@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Logic Ops 位运算演示</title>
+<style>
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; padding: 20px; margin: 0; }
+h2 { color: #a78bfa; margin: 0 0 8px 0; font-size: 18px; }
+.subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+.container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; max-width: 960px; }
+.card { background: #151b2e; border: 1px solid #2d3a5c; border-radius: 8px; padding: 12px; }
+.card-title { font-size: 12px; font-weight: bold; margin-bottom: 8px; }
+canvas { width: 100%; border-radius: 4px; background: #000; image-rendering: pixelated; }
+.controls { display: flex; gap: 6px; margin-top: 10px; }
+button { flex: 1; background: #1e293b; color: #94a3b8; border: 1px solid #475569; border-radius: 4px; padding: 8px; font-size: 11px; cursor: pointer; }
+button.active { background: #2d3a5c; color: #e2e8f0; border-color: #a78bfa; }
+.desc { font-size: 11px; color: #94a3b8; margin-top: 8px; line-height: 1.5; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<h2>🔧 Logic Ops — Stencil / Mask 应用</h2>
+<div class="subtitle">场景：Src A = 角色剪影（Stencil Buffer），Src B = 圆形光照范围（Light Mask）。Logic Op 决定哪些像素最终通过。</div>
+<div class="container">
+  <div class="card">
+    <div class="card-title">Src A — 角色剪影 (Stencil)</div>
+    <canvas id="logicA" width="280" height="160"></canvas>
+    <div class="desc">代表 Stencil Buffer 中值为 1 的区域（角色占据的像素）。</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Src B — 光照范围 (Mask)</div>
+    <canvas id="logicB" width="280" height="160"></canvas>
+    <div class="desc">代表光源照射到的圆形区域。仅在光锥内的像素被照亮。</div>
+  </div>
+  <div class="card">
+    <div class="card-title">结果 — 被照亮的角色</div>
+    <canvas id="logicResult" width="280" height="160"></canvas>
+    <div class="controls">
+      <button onclick="setLogic('and')" class="logic-btn active" data-mode="and">AND</button>
+      <button onclick="setLogic('or')" class="logic-btn" data-mode="or">OR</button>
+      <button onclick="setLogic('xor')" class="logic-btn" data-mode="xor">XOR</button>
+      <button onclick="setLogic('not')" class="logic-btn" data-mode="not">NOT</button>
+    </div>
+    <div class="desc" id="logicDesc">AND：仅保留同时在角色内 AND 光照内的像素（Stencil 通过 + 被照亮）。</div>
+  </div>
+</div>
+<script>
+const W = 280, H = 160;
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+
+function genChar(x, y) {
+  const cx = 140, cy = 80;
+  const dx = x - cx, dy = y - cy;
+  const body = (Math.abs(dx) < 25 && dy > -30 && dy < 50) || (Math.sqrt(dx*dx + (dy+40)*(dy+40)) < 20);
+  const armL = (x > cx-50 && x < cx-20 && y > cy-10 && y < cy+30);
+  const armR = (x > cx+20 && x < cx+50 && y > cy-10 && y < cy+30);
+  return body || armL || armR;
+}
+
+function genLight(x, y) {
+  const cx = 180 + Math.sin(Date.now()*0.001)*40, cy = 60;
+  const dx = x - cx, dy = y - cy;
+  return Math.sqrt(dx*dx + dy*dy*2) < 55;
+}
+
+function drawLogic() {
+  const mode = document.querySelector('.logic-btn.active').dataset.mode;
+  const descs = {
+    and: 'AND：交集。仅保留同时在角色内 AND 光照内的像素。用于 Stencil 测试通过 + 被照亮。',
+    or: 'OR：并集。保留角色或光照中的任意像素。用于合并多个遮罩。',
+    xor: 'XOR：差异。保留只在一个区域中的像素。用于检测遮罩差异。',
+    not: 'NOT：反相。对角色取反，保留非角色区域。用于反向遮罩。'
+  };
+  document.getElementById('logicDesc').textContent = descs[mode];
+
+  const imgA = new ImageData(W, H);
+  const imgB = new ImageData(W, H);
+  const imgR = new ImageData(W, H);
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const a = genChar(x, y) ? 255 : 0;
+      const b = genLight(x, y) ? 255 : 0;
+      let r;
+      switch(mode) {
+        case 'and': r = (a & b); break;
+        case 'or':  r = (a | b); break;
+        case 'xor': r = (a ^ b); break;
+        case 'not': r = (~a) & 255; break;
+      }
+      const i = (y*W+x)*4;
+      // Src A: green character
+      imgA.data[i]=0; imgA.data[i+1]=a; imgA.data[i+2]=0; imgA.data[i+3]=255;
+      // Src B: yellow light
+      imgB.data[i]=b; imgB.data[i+1]=b; imgB.data[i+2]=0; imgB.data[i+3]=255;
+      // Result: white where both, colored otherwise
+      if (mode === 'and') {
+        imgR.data[i]=r; imgR.data[i+1]=r; imgR.data[i+2]=0; imgR.data[i+3]=255;
+      } else if (mode === 'or') {
+        imgR.data[i]=Math.max(a,b); imgR.data[i+1]=Math.max(a,b); imgR.data[i+2]=0; imgR.data[i+3]=255;
+      } else if (mode === 'xor') {
+        imgR.data[i]=r; imgR.data[i+1]=0; imgR.data[i+2]=r; imgR.data[i+3]=255;
+      } else {
+        imgR.data[i]=r; imgR.data[i+1]=r; imgR.data[i+2]=r; imgR.data[i+3]=255;
+      }
+    }
+  }
+  document.getElementById('logicA').getContext('2d').putImageData(imgA, 0, 0);
+  document.getElementById('logicB').getContext('2d').putImageData(imgB, 0, 0);
+  document.getElementById('logicResult').getContext('2d').putImageData(imgR, 0, 0);
+  requestAnimationFrame(drawLogic);
+}
+function setLogic(mode) {
+  document.querySelectorAll('.logic-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+}
+drawLogic();
+</script>
+</body>
+</html>
